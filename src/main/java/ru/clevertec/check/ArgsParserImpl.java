@@ -9,31 +9,24 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class ApplicationArgsParser {
+public class ArgsParserImpl implements ArgsParser {
 
     private static final String DEBIT_CARD_BALANCE = "balanceDebitCard";
     private static final String DISCOUNT_CARD = "discountCard";
     private static final String SEPARATOR = "=";
 
-    private ApplicationArgsParser() {
+    public ArgsParserImpl() {
     }
 
-    public record ApplicationArgs(
-            Map<Long, Integer> idToQuantity,
-            int discountCardNumber,
-            BigDecimal debitCardBalance
-    ) {
-    }
-
-    public static ApplicationArgs parse(String[] args) {
+    public Args parseArgs(String[] args) {
         List<String> argsList = new ArrayList<>(Arrays.asList(args));
 
-        BigDecimal debitCardBalance = extractDebitCardBalanceAndRemoveFromArgs(argsList);
-        int discountCardNumber = extractDiscountCardNumberAndRemoveFromArgs(argsList);
-        Map<Long, Integer> idToQuantity = extractIdToQuantityAndRemoveFromArgs(argsList);
+        DebitCardRequest debitCardRequest = extractDebitCardRequestAndRemoveFromArgs(argsList);
+        DiscountCardRequest discountCardRequest = extractDiscountCardRequestAndRemoveFromArgs(argsList);
+        List<ProductRequest> productRequests = extractProductRequestsAndRemoveFromArgs(argsList);
 
-        if (idToQuantity.isEmpty()) {
-            throw new BadRequestException("No 'id-quantity' entries were specified");
+        if (productRequests.isEmpty()) {
+            throw new BadRequestException("No 'id-quantity' entries were specified, format: %d-%d");
         }
 
         if (!argsList.isEmpty()) {
@@ -41,11 +34,11 @@ public class ApplicationArgsParser {
             throw new BadRequestException(errorMsg);
         }
 
-        return new ApplicationArgs(idToQuantity, discountCardNumber, debitCardBalance);
+        return new Args(productRequests, discountCardRequest, debitCardRequest);
     }
 
-    private static BigDecimal extractDebitCardBalanceAndRemoveFromArgs(List<String> argsList) {
-
+    private static DebitCardRequest extractDebitCardRequestAndRemoveFromArgs(List<String> argsList) {
+        
         String debitCardBalancePrefix = String.format("%s%s", DEBIT_CARD_BALANCE, SEPARATOR);
         List<String> debitCardBalanceArgs = StringUtils.findStringsWithPrefix(argsList, debitCardBalancePrefix);
 
@@ -63,16 +56,18 @@ public class ApplicationArgsParser {
                 .orElseThrow(() -> new BadRequestException("No debit card balance value is specified"));
 
         String debitCardBalanceValueRegex = "-?[0-9]+(.[0-9]{1,2})?";
-        return StringUtils.mapStringIfMatchesRegex(debitCardBalanceValue, debitCardBalanceValueRegex, BigDecimal::new)
+        BigDecimal debitCardBalance = StringUtils.mapStringIfMatchesRegex(debitCardBalanceValue, debitCardBalanceValueRegex, BigDecimal::new)
                 .orElseThrow(() -> new BadRequestException("Incorrect format of debit card balance option"));
+
+        return new DebitCardRequest(debitCardBalance);
     }
 
-    private static int extractDiscountCardNumberAndRemoveFromArgs(List<String> argsList) {
+    private static DiscountCardRequest extractDiscountCardRequestAndRemoveFromArgs(List<String> argsList) {
         String discountCardPrefix = String.format("%s%s", DISCOUNT_CARD, SEPARATOR);
         List<String> discountCardArgs = StringUtils.findStringsWithPrefix(argsList, discountCardPrefix);
 
         if (discountCardArgs.isEmpty()) {
-            return -1;
+            return null;
         }
         if (discountCardArgs.size() > 1) {
             throw new BadRequestException("More than one discount cards were specified");
@@ -85,11 +80,13 @@ public class ApplicationArgsParser {
                 .orElseThrow(() -> new BadRequestException("No discount card value is specified"));
 
         String discountCardValueRegex = "[0-9]{4}";
-        return StringUtils.mapStringIfMatchesRegex(discountCardValue, discountCardValueRegex, Integer::valueOf)
+        int discountCardNumber = StringUtils.mapStringIfMatchesRegex(discountCardValue, discountCardValueRegex, Integer::valueOf)
                 .orElseThrow(() -> new BadRequestException("Incorrect format of discount card option"));
+
+        return new DiscountCardRequest(discountCardNumber);
     }
 
-    private static Map<Long, Integer> extractIdToQuantityAndRemoveFromArgs(List<String> args) {
+    private static List<ProductRequest> extractProductRequestsAndRemoveFromArgs(List<String> args) {
         String idGroupName = "id";
         String quantityGroupName = "quantity";
         String separator = "-";
@@ -102,13 +99,13 @@ public class ApplicationArgsParser {
 
         Pattern pattern = Pattern.compile(idToQuantityRegex);
 
-        return findIdToQuantityEntriesAndRemoveFromArgs(args, pattern, idGroupName, quantityGroupName);
+        return findProductRequestsAndRemoveFromArgs(args, pattern, idGroupName, quantityGroupName);
     }
 
-    private static Map<Long, Integer> findIdToQuantityEntriesAndRemoveFromArgs(List<String> args,
-                                                                               Pattern pattern,
-                                                                               String idGroupName,
-                                                                               String quantityGroupName) {
+    private static List<ProductRequest> findProductRequestsAndRemoveFromArgs(List<String> args,
+                                                                             Pattern pattern,
+                                                                             String idGroupName,
+                                                                             String quantityGroupName) {
         Map<Long, Integer> idToQuantityMap = new HashMap<>();
 
         final int size = args.size();
@@ -130,6 +127,9 @@ public class ApplicationArgsParser {
             idToQuantityMap.merge(id, quantity, Integer::sum);
             args.remove(i);
         }
-        return idToQuantityMap;
+
+        List<ProductRequest> productRequests = new ArrayList<>();
+        idToQuantityMap.forEach((id, qty) -> productRequests.add(new ProductRequest(id, qty)));
+        return productRequests;
     }
 }

@@ -45,5 +45,4 @@ public class StringUtils {
                 mapper.apply(string)
         );
     }
-
 }
